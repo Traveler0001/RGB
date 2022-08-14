@@ -1,0 +1,506 @@
+C51 COMPILER V9.59.0.0   MAIN                                                              08/14/2022 16:12:51 PAGE 1   
+
+
+C51 COMPILER V9.59.0.0, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\HEX\main.obj
+COMPILER INVOKED BY: F:\keil_c51_v5\C51\BIN\C51.EXE USER\main.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\List
+                    -ings\main.lst) TABS(2) OBJECT(.\HEX\main.obj)
+
+line level    source
+
+   1          /************************************
+   2           * @file main.c
+   3           * @author your name (you@domain.com)
+   4           * @brief RGB彩灯调色程序
+   5           * @version 0.1
+   6           * @date 2022-08-07
+   7           *
+   8           * @copyright Copyright (c) 2022
+   9           *
+  10           ************************************/
+  11          
+  12          #include "STC12C5A60S2.h"
+  13          #include <intrins.h> // 声明了void _nop_(void);
+  14          
+  15          /************************************
+  16           * @brief 端口定义
+  17           *
+  18           ************************************/
+  19          sbit RED = P1 ^ 0;
+  20          sbit GREEN = P1 ^ 1;
+  21          sbit BLUE = P1 ^ 2;
+  22          
+  23          /************************************
+  24           * @brief 定时器满溢值
+  25           *
+  26           ************************************/
+  27          #define RGB_TIME 0xFFFF
+  28          
+  29          /************************************
+  30           * @brief 灯序计数与彩灯保持计时
+  31           *
+  32           ************************************/
+  33          const unsigned short int TIME_SUM = 1000;
+  34          char RGB_NUMBER = 0;
+  35          char status = 0;
+  36          
+  37          /************************************
+  38           * @brief 按键扫描相关及彩灯保持时间改变
+  39           *
+  40           ************************************/
+  41          unsigned char KEY_STATUS = 0;
+  42          unsigned short int KEY_RED_TIMES = 0;
+  43          unsigned short int KEY_GREEN_TIMES = 0;
+  44          unsigned short int KEY_BLUE_TIMES = 0;
+  45          unsigned short int KEY_RED_TIME = 0;
+  46          unsigned short int KEY_GREEN_TIME = 0;
+  47          unsigned short int KEY_BLUE_TIME = 0;
+  48          
+  49          /************************************
+  50           * @brief 按键定义
+  51           *
+  52           ************************************/
+  53          #define KEY_RED_UP 0x10
+  54          #define KEY_RED_DOWN 0x04
+C51 COMPILER V9.59.0.0   MAIN                                                              08/14/2022 16:12:51 PAGE 2   
+
+  55          #define KEY_GREEN_UP 0x20
+  56          #define KEY_GREEN_DOWN 0x02
+  57          #define KEY_BLUE_UP 0x40
+  58          #define KEY_BLUE_DOWN 0x08
+  59          #define KEY_CHANGE_NUMBER 1
+  60          #define LED_ON 1
+  61          #define LED_OFF 0
+  62          
+  63          void Delay10ms() //@11.0592MHz
+  64          {
+  65   1          unsigned char i, j;
+  66   1      
+  67   1          _nop_();
+  68   1          _nop_();
+  69   1          i = 108;
+  70   1          j = 144;
+  71   1          do
+  72   1          {
+  73   2              while (--j)
+  74   2                  ;
+  75   2          } while (--i);
+  76   1      }
+  77          
+  78          void Timer0Init(void) // @11.0592MHz
+  79          {
+  80   1          AUXR |= 0x80; //定时器时钟1T模式
+  81   1          TMOD &= 0xF0; //设置定时器模式
+  82   1          TF0 = 0;      //清除TF0标志
+  83   1      
+  84   1          ET0 = 1; //定时器0溢出中断
+  85   1          EX0 = 0;
+  86   1      }
+  87          
+  88          void UartInit(void) // 4800bps@11.0592MHz
+  89          {
+  90   1          PCON &= 0x7F; //波特率不倍速
+  91   1          SCON = 0x50;  // 8位数据,可变波特率
+  92   1          AUXR |= 0x04; //定时器时钟1T模式
+  93   1          BRT = 0xB8;   //设置定时重载值
+  94   1          AUXR |= 0x01; //串口1使用独立波特率发射器为波特率发生器
+  95   1          AUXR |= 0x10; //启动独立波特率发射器
+  96   1          ES = 1;       //使能串口中断
+  97   1      }
+  98          
+  99          /************************************
+ 100           * @brief IO初始化
+ 101           *
+ 102           ************************************/
+ 103          void init(void)
+ 104          {
+ 105   1          P2 = 0;
+ 106   1          Delay10ms();
+ 107   1          RED = 0;
+ 108   1          GREEN = 0;
+ 109   1          BLUE = 0;
+ 110   1          EA = 1;
+ 111   1      }
+ 112          
+ 113          /************************************
+ 114           * @brief 定时器初值数据处理
+ 115           *
+ 116           ************************************/
+C51 COMPILER V9.59.0.0   MAIN                                                              08/14/2022 16:12:51 PAGE 3   
+
+ 117          void Time_Date_Dispose(void)
+ 118          {
+ 119   1          unsigned short int sum = 0;
+ 120   1          unsigned short int key_sum = 0;
+ 121   1      
+ 122   1          //计算时间次数和
+ 123   1          key_sum = KEY_RED_TIMES + KEY_GREEN_TIMES + KEY_BLUE_TIMES;
+ 124   1      
+ 125   1          //判断数据和是否越界
+ 126   1          if (key_sum > TIME_SUM)
+ 127   1          {
+ 128   2              //越界全部归零
+ 129   2              KEY_BLUE_TIMES = 0;
+ 130   2              KEY_GREEN_TIMES = 0;
+ 131   2              KEY_RED_TIMES = 0;
+ 132   2          }
+ 133   1      
+ 134   1          //计算三值比例(千分位计算)
+ 135   1          if (key_sum != 0)
+ 136   1          {
+ 137   2              KEY_RED_TIME = ((float)KEY_RED_TIMES / key_sum) * TIME_SUM;
+ 138   2              KEY_GREEN_TIME = ((float)KEY_GREEN_TIMES / key_sum) * TIME_SUM;
+ 139   2              KEY_BLUE_TIME = ((float)KEY_BLUE_TIMES / key_sum) * TIME_SUM;
+ 140   2          }
+ 141   1          else
+ 142   1          {
+ 143   2              //为0直接赋值0
+ 144   2              KEY_BLUE_TIME = KEY_BLUE_TIMES;
+ 145   2              KEY_GREEN_TIME = KEY_GREEN_TIMES;
+ 146   2              KEY_RED_TIME = KEY_RED_TIMES;
+ 147   2          }
+ 148   1      
+ 149   1          //计算比例值和(总值1000)
+ 150   1          sum = KEY_RED_TIME + KEY_GREEN_TIME + KEY_BLUE_TIME;
+ 151   1          //根据比例计算定时器重载值，此前需先处理比例和异常问题
+ 152   1          if (sum == TIME_SUM)
+ 153   1          {
+ 154   2              //至少有一值不为零
+ 155   2              KEY_RED_TIME = RGB_TIME - KEY_RED_TIME * 11;
+ 156   2              KEY_GREEN_TIME = RGB_TIME - KEY_GREEN_TIME * 11;
+ 157   2              KEY_BLUE_TIME = RGB_TIME - KEY_BLUE_TIME * 11;
+ 158   2          }
+ 159   1          else if (sum != 0 && sum < TIME_SUM)
+ 160   1          {
+ 161   2              //计数和不为0也不为1000，但不可能有两值为0
+ 162   2              //判断按下的是那个灯有关的按键
+ 163   2              if (KEY_STATUS == KEY_RED_UP || KEY_STATUS == KEY_RED_DOWN)
+ 164   2              {
+ 165   3                  //判断红色比例是否为0
+ 166   3                  if (KEY_RED_TIME != 0)
+ 167   3                  {
+ 168   4                      //红色不为0，直接计算
+ 169   4                      KEY_RED_TIME = RGB_TIME - (TIME_SUM - KEY_BLUE_TIME - KEY_GREEN_TIME) * 11;
+ 170   4                      KEY_BLUE_TIME = RGB_TIME - KEY_BLUE_TIME * 11;
+ 171   4                      KEY_GREEN_TIME = RGB_TIME - KEY_GREEN_TIME * 11;
+ 172   4                  }
+ 173   3                  else
+ 174   3                  {
+ 175   4                      //红色为0，剩下两值一定不为0
+ 176   4                      KEY_GREEN_TIME = RGB_TIME - (TIME_SUM - KEY_BLUE_TIME) * 11;
+ 177   4                      KEY_BLUE_TIME = RGB_TIME - KEY_BLUE_TIME * 11;
+ 178   4                  }
+C51 COMPILER V9.59.0.0   MAIN                                                              08/14/2022 16:12:51 PAGE 4   
+
+ 179   3              }
+ 180   2              else if (KEY_STATUS == KEY_GREEN_UP || KEY_STATUS == KEY_GREEN_DOWN)
+ 181   2              {
+ 182   3                  //判断绿色比例是否为0
+ 183   3                  if (KEY_GREEN_TIME != 0)
+ 184   3                  {
+ 185   4                      //绿色不为0，直接计算
+ 186   4                      KEY_GREEN_TIME = RGB_TIME - (TIME_SUM - KEY_BLUE_TIME - KEY_RED_TIME) * 11;
+ 187   4                      KEY_BLUE_TIME = RGB_TIME - KEY_BLUE_TIME * 11;
+ 188   4                      KEY_RED_TIME = RGB_TIME - KEY_RED_TIME * 11;
+ 189   4                  }
+ 190   3                  else
+ 191   3                  {
+ 192   4                      //绿色为0，剩下两值一定不为0
+ 193   4                      KEY_BLUE_TIME = RGB_TIME - (TIME_SUM - KEY_RED_TIME) * 11;
+ 194   4                      KEY_RED_TIME = RGB_TIME - KEY_RED_TIME * 11;
+ 195   4                  }
+ 196   3              }
+ 197   2              else if (KEY_STATUS == KEY_BLUE_UP || KEY_STATUS == KEY_BLUE_DOWN)
+ 198   2              {
+ 199   3      
+ 200   3                  //判断蓝色比例是否为0
+ 201   3                  if (KEY_BLUE_TIME != 0)
+ 202   3                  {
+ 203   4                      //蓝色不为0，直接计算
+ 204   4                      KEY_BLUE_TIME = RGB_TIME - (TIME_SUM - KEY_GREEN_TIME - KEY_RED_TIME) * 11;
+ 205   4                      KEY_RED_TIME = RGB_TIME - KEY_RED_TIME * 11;
+ 206   4                      KEY_GREEN_TIME = RGB_TIME - KEY_GREEN_TIME * 11;
+ 207   4                  }
+ 208   3                  else
+ 209   3                  {
+ 210   4                      //蓝色为0，剩下两值一定不为0
+ 211   4                      KEY_RED_TIME = RGB_TIME - (TIME_SUM - KEY_GREEN_TIME) * 11;
+ 212   4                      KEY_GREEN_TIME = RGB_TIME - KEY_GREEN_TIME * 11;
+ 213   4                  }
+ 214   3              }
+ 215   2          }
+ 216   1          else
+ 217   1          {
+ 218   2              //等于0直接赋满值
+ 219   2              KEY_RED_TIME = RGB_TIME;
+ 220   2              KEY_GREEN_TIME = RGB_TIME;
+ 221   2              KEY_BLUE_TIME = RGB_TIME;
+ 222   2          }
+ 223   1      }
+ 224          
+ 225          /************************************
+ 226           * @brief 按键扫描
+ 227           *
+ 228           ************************************/
+ 229          void key_scan()
+ 230          {
+ 231   1          int i = 0;
+ 232   1      
+ 233   1          if (P2 != 0x00)
+ 234   1          {
+ 235   2              TR0 = 0;
+ 236   2              Delay10ms();
+ 237   2              //消抖
+ 238   2              if (P2 != 0x00)
+ 239   2              {
+ 240   3                  //获取按键信息
+C51 COMPILER V9.59.0.0   MAIN                                                              08/14/2022 16:12:51 PAGE 5   
+
+ 241   3                  KEY_STATUS = P2;
+ 242   3                  switch (KEY_STATUS)
+ 243   3                  {
+ 244   4                      //对不同值做不同处理
+ 245   4                  case KEY_RED_UP:
+ 246   4                      KEY_RED_TIMES += KEY_CHANGE_NUMBER;
+ 247   4                      break;
+ 248   4                  case KEY_RED_DOWN:
+ 249   4                      if (KEY_RED_TIMES >= KEY_CHANGE_NUMBER)
+ 250   4                      {
+ 251   5                          KEY_RED_TIMES -= KEY_CHANGE_NUMBER;
+ 252   5                      }
+ 253   4                      break;
+ 254   4                  case KEY_GREEN_UP:
+ 255   4                      KEY_GREEN_TIMES += KEY_CHANGE_NUMBER;
+ 256   4                      break;
+ 257   4                  case KEY_GREEN_DOWN:
+ 258   4                      if (KEY_GREEN_TIMES >= KEY_CHANGE_NUMBER)
+ 259   4                      {
+ 260   5                          KEY_GREEN_TIMES -= KEY_CHANGE_NUMBER;
+ 261   5                      }
+ 262   4                      break;
+ 263   4                  case KEY_BLUE_UP:
+ 264   4                      KEY_BLUE_TIMES += KEY_CHANGE_NUMBER;
+ 265   4                      break;
+ 266   4                  case KEY_BLUE_DOWN:
+ 267   4                      if (KEY_BLUE_TIMES >= KEY_CHANGE_NUMBER)
+ 268   4                      {
+ 269   5                          KEY_BLUE_TIMES -= KEY_CHANGE_NUMBER;
+ 270   5                      }
+ 271   4                      break;
+ 272   4                  }
+ 273   3      
+ 274   3                  Time_Date_Dispose();
+ 275   3      
+ 276   3                  //如需设置不连续按键，删掉i即可，反之亦然，i越大，按键值自增时间
+             -越长
+ 277   3                  while (!(i == 50 || P2 == 0X00))
+ 278   3                  {
+ 279   4                      Delay10ms();
+ 280   4                      i++;
+ 281   4                  }
+ 282   3              }
+ 283   2              if ((KEY_BLUE_TIMES + KEY_GREEN_TIMES + KEY_RED_TIMES) == 0)
+ 284   2              {
+ 285   3                  TR0 = 0;
+ 286   3                  status = 0;
+ 287   3                  RGB_NUMBER = 0;
+ 288   3              }
+ 289   2              else
+ 290   2              {
+ 291   3                  TR0 = 0;
+ 292   3                  status = 1;
+ 293   3                  RGB_NUMBER = 0;
+ 294   3              }
+ 295   2          }
+ 296   1      }
+ 297          
+ 298          /***********************************************
+ 299           *函数名称：Uart1_SendChar
+ 300           *功    能：串口1发送单个字符函数
+ 301           *入口参数：Udat：欲发送的数据
+C51 COMPILER V9.59.0.0   MAIN                                                              08/14/2022 16:12:51 PAGE 6   
+
+ 302           *返 回 值：无
+ 303           *备    注：无
+ 304           ************************************************/
+ 305          void Uart1_SendChar(unsigned char Udat)
+ 306          {
+ 307   1          SBUF = Udat; //将要发送的数据放入串口数据发送区
+ 308   1          while (!TI)
+ 309   1              ;   //等待发送完成
+ 310   1          TI = 0; //清零TI
+ 311   1      }
+ 312          
+ 313          void Rgb_Change(void)
+ 314          {
+ 315   1          char i = 0;
+ 316   1      
+ 317   1          //判断RGB持续时间是否为0
+ 318   1          if ((KEY_BLUE_TIMES + KEY_GREEN_TIMES + KEY_RED_TIMES) != 0)
+ 319   1          {
+ 320   2              //判断是否允许RGB状态改变
+ 321   2              if (status)
+ 322   2              {
+ 323   3                  TR0 = 0;
+ 324   3                  i = RGB_NUMBER;
+ 325   3                  status = 0;
+ 326   3      
+ 327   3                  if (RGB_NUMBER == 0)
+ 328   3                  {
+ 329   4                      //定时器赋初值
+ 330   4                      TH0 = KEY_RED_TIME >> 8;
+ 331   4                      TL0 = (KEY_RED_TIME << 8) >> 8;
+ 332   4      
+ 333   4                      //改变LED状态
+ 334   4                      if (KEY_RED_TIMES > 0)
+ 335   4                      {
+ 336   5                          P1 = 0x01;
+ 337   5                      }
+ 338   4                      else
+ 339   4                      {
+ 340   5                          P1 = LED_OFF;
+ 341   5                      }
+ 342   4      
+ 343   4                      //灯序+1
+ 344   4                      RGB_NUMBER++;
+ 345   4                  }
+ 346   3                  else if (RGB_NUMBER == 1)
+ 347   3                  {
+ 348   4                      TH0 = KEY_GREEN_TIME >> 8;
+ 349   4                      TL0 = (KEY_GREEN_TIME << 8) >> 8;
+ 350   4      
+ 351   4                      if (KEY_GREEN_TIMES != 0)
+ 352   4                      {
+ 353   5                          P1 = 0x02;
+ 354   5                      }
+ 355   4                      else
+ 356   4                      {
+ 357   5                          P1 = LED_OFF;
+ 358   5                      }
+ 359   4      
+ 360   4                      RGB_NUMBER++;
+ 361   4                  }
+ 362   3                  else if (RGB_NUMBER == 2)
+ 363   3                  {
+C51 COMPILER V9.59.0.0   MAIN                                                              08/14/2022 16:12:51 PAGE 7   
+
+ 364   4                      TH0 = KEY_BLUE_TIME >> 8;
+ 365   4                      TL0 = (KEY_BLUE_TIME << 8) >> 8;
+ 366   4      
+ 367   4                      if (KEY_BLUE_TIMES != 0)
+ 368   4                      {
+ 369   5                          P1 = 0x04;
+ 370   5                      }
+ 371   4                      else
+ 372   4                      {
+ 373   5                          P1 = LED_OFF;
+ 374   5                      }
+ 375   4      
+ 376   4                      RGB_NUMBER = 0;
+ 377   4                  }
+ 378   3      
+ 379   3                  TR0 = 1;
+ 380   3              }
+ 381   2          }
+ 382   1          else
+ 383   1          {
+ 384   2              //持续时间为0，灯灭
+ 385   2              P1 = LED_OFF;
+ 386   2          }
+ 387   1      }
+ 388          
+ 389          void main()
+ 390          {
+ 391   1          init();
+ 392   1          Timer0Init();
+ 393   1          UartInit();
+ 394   1          status = 1;
+ 395   1          Time_Date_Dispose();
+ 396   1      
+ 397   1          Uart1_SendChar(0x88); //开机发送测试数据
+ 398   1      
+ 399   1          while (1)
+ 400   1          {
+ 401   2              //检测按键有没有按下
+ 402   2              if (P2 == 0x00)
+ 403   2              {
+ 404   3                  Rgb_Change();
+ 405   3              }
+ 406   2              else
+ 407   2              {
+ 408   3                  key_scan();
+ 409   3              }
+ 410   2          }
+ 411   1      }
+ 412          
+ 413          /************************************
+ 414           * @brief 定时器中断函数
+ 415           *
+ 416           ************************************/
+ 417          void Time_link() interrupt 1
+ 418          {
+ 419   1          TR0 = 0;
+ 420   1          status = 1;
+ 421   1      }
+ 422          
+ 423          /***********************************************
+ 424           *函数名称：Uart1_ISR
+ 425           *功    能：串口1中断处理函数
+C51 COMPILER V9.59.0.0   MAIN                                                              08/14/2022 16:12:51 PAGE 8   
+
+ 426           *入口参数：无
+ 427           *返 回 值：无
+ 428           *备    注：无
+ 429           ************************************************/
+ 430          void Uart1_ISR(void) interrupt 4
+ 431          {
+ 432   1          unsigned char i = 0;
+ 433   1          TR0 = 0;
+ 434   1      
+ 435   1          if (RI) //发送和接收共用一个中断向量，需在程序中判断
+ 436   1          {
+ 437   2              i = SBUF;
+ 438   2              if (i == 'a')
+ 439   2              {
+ 440   3                  //调试用
+ 441   3                  Uart1_SendChar((unsigned char)(KEY_RED_TIMES >> 8));
+ 442   3                  Uart1_SendChar((unsigned char)((KEY_RED_TIMES << 8) >> 8));
+ 443   3                  Uart1_SendChar(' ');
+ 444   3                  Uart1_SendChar((unsigned char)(KEY_GREEN_TIMES >> 8));
+ 445   3                  Uart1_SendChar((unsigned char)((KEY_GREEN_TIMES << 8) >> 8));
+ 446   3                  Uart1_SendChar(' ');
+ 447   3                  Uart1_SendChar((unsigned char)(KEY_BLUE_TIMES >> 8));
+ 448   3                  Uart1_SendChar((unsigned char)(((KEY_BLUE_TIMES << 8) >> 8)));
+ 449   3                  Uart1_SendChar('\n');
+ 450   3                  Uart1_SendChar((unsigned char)(KEY_RED_TIME >> 8));
+ 451   3                  Uart1_SendChar((unsigned char)((KEY_RED_TIME << 8) >> 8));
+ 452   3                  Uart1_SendChar(' ');
+ 453   3                  Uart1_SendChar((unsigned char)(KEY_GREEN_TIME >> 8));
+ 454   3                  Uart1_SendChar((unsigned char)((KEY_GREEN_TIME << 8) >> 8));
+ 455   3                  Uart1_SendChar(' ');
+ 456   3                  Uart1_SendChar((unsigned char)(KEY_BLUE_TIME >> 8));
+ 457   3                  Uart1_SendChar((unsigned char)(((KEY_BLUE_TIME << 8) >> 8)));
+ 458   3                  Uart1_SendChar('\n');
+ 459   3                  Uart1_SendChar(P2);
+ 460   3                  Uart1_SendChar('\n');
+ 461   3                  Uart1_SendChar(P1);
+ 462   3                  Uart1_SendChar('\n');
+ 463   3              }
+ 464   2      
+ 465   2              RI = 0; //串口接收中断标记需软件清零
+ 466   2          }
+ 467   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1353    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     17       6
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

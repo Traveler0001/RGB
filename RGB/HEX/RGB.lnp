@@ -1,0 +1,4 @@
+".\HEX\STARTUP.obj",
+".\HEX\main.obj" 
+TO ".\HEX\RGB" 
+PRINT(".\Listings\RGB.m51") RAMSIZE(256) 
